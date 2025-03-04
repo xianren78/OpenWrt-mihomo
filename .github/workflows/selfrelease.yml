@@ -1,0 +1,103 @@
+name: Release self Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag for the release (e.g., v1.0.0)'
+        required: false
+  push:
+    tags:
+      - v*
+
+jobs:
+  release:
+    name: ${{ matrix.arch }}-${{ matrix.branch }} release
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - aarch64_generic
+          - x86_64
+        branch:
+          - openwrt-23.05
+          - openwrt-24.10
+          - SNAPSHOT
+        exclude:
+          - arch: aarch64_cortex-a76
+            branch: openwrt-23.05
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ccache
+        run: sudo apt-get update && sudo apt-get install -y ccache
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ matrix.arch }}-${{ matrix.branch }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ matrix.arch }}-${{ matrix.branch }}-
+
+      - name: Build
+        uses: openwrt/gh-action-sdk@main
+        env:
+          ARCH: ${{ matrix.arch }}-${{ matrix.branch }}
+          FEEDNAME: nikki
+          PACKAGES: luci-app-nikki
+          INDEX: 1
+          KEY_BUILD: ${{ secrets.KEY_BUILD }}
+          NO_REFRESH_CHECK: true
+          USE_CCACHE: 1  # 启用 ccache（如果 action 支持此变量）
+
+      - name: Compress
+        run: |
+          tar -c -z -f nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz -C bin/packages/${{ matrix.arch }}/nikki .
+          mkdir -p public/${{ matrix.branch }}/${{ matrix.arch }}
+          mv bin/packages/${{ matrix.arch }}/nikki public/${{ matrix.branch }}/${{ matrix.arch }}
+          tar -c -z -f feed_nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz public/${{ matrix.branch }}/${{ matrix.arch }}
+
+      - name: Release
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed_nikki_${{ matrix.arch }}-${{ matrix.branch }}
+          path: feed_nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz
+
+  feed:
+    needs: release
+    name: feed
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download
+        uses: actions/download-artifact@v4
+        with:
+          pattern: feed_nikki_*
+          merge-multiple: true
+      
+      - name: Uncompress
+        run: |
+          for file in feed_nikki_*.tar.gz; do tar -x -z -f "$file"; done
+      
+      - name: Key
+        run: |
+          echo "${{ secrets.KEY_BUILD_PUB }}" > public/key-build.pub
+
+      - name: Feed
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          force_orphan: true
+          commit_message: Update Feed
