@@ -201,11 +201,13 @@ service_started() {
 	config_get tun_device "mixin" "tun_device" "nikki"
 	## proxy config
 	### general
-	local tcp_mode udp_mode ipv4_proxy ipv6_proxy
+	local tcp_mode udp_mode ipv4_proxy ipv6_proxy tun_timeout tun_interval
 	config_get tcp_mode "proxy" "tcp_mode"
 	config_get udp_mode "proxy" "udp_mode"
 	config_get_bool ipv4_proxy "proxy" "ipv4_proxy" 0
 	config_get_bool ipv6_proxy "proxy" "ipv6_proxy" 0
+	config_get tun_timeout "proxy" "tun_timeout" 30
+	config_get tun_interval "proxy" "tun_interval" 1
 	## routing config
 	local tproxy_fw_mark tun_fw_mark tproxy_rule_pref tun_rule_pref tproxy_route_table tun_route_table cgroup_id cgroup_name
 	config_get tproxy_fw_mark "routing" "tproxy_fw_mark"
@@ -230,13 +232,11 @@ service_started() {
 		log "Proxy" "Enabled."
 		# wait for tun device online
 		if [ "$tun_enable" == 1 ]; then
-			log "Proxy" "Waiting for tun device online..."
-			local tun_timeout; tun_timeout=15
-			local tun_interval; tun_interval=1
+			log "Proxy" "Waiting for tun device online within $tun_timeout seconds..."
 			while [ "$tun_timeout" -gt 0 ]; do
 				if (ip link show dev "$tun_device" > /dev/null 2>&1); then
 					if [ "$(ip -json addr show dev "$tun_device" | tun_device="$tun_device" yq -M '.[] | select(.ifname = strenv(tun_device)) | .addr_info | length')" -gt 0 ]; then
-						log "Proxy" "Tun device is online."
+						log "Proxy" "TUN device is online."
 						break
 					fi
 				fi
@@ -244,7 +244,7 @@ service_started() {
 				sleep "$tun_interval"
 			done
 			if [ "$tun_timeout" -le 0 ]; then
-				log "Proxy" "Waiting timeout, tun device is not online."
+				log "Proxy" "Timeout, TUN device is not online."
 				log "App" "Exit."
 				return
 			fi

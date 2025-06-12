@@ -123,6 +123,10 @@ routing=$(uci -q get nikki.routing); [ -z "$routing" ] && {
 	uci set nikki.routing.cgroup_name=nikki
 }
 
+proxy_tun_timeout=$(uci -q get nikki.proxy.tun_timeout); [ -z "$proxy_tun_timeout" ] && uci set nikki.proxy.tun_timeout=30
+
+proxy_tun_interval=$(uci -q get nikki.proxy.tun_interval); [ -z "$proxy_tun_interval" ] && uci set nikki.proxy.tun_interval=1
+
 # commit
 uci commit nikki
 
