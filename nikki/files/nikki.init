@@ -330,8 +330,8 @@ cleanup() {
 	# get config
 	## routing config
 	local tproxy_route_table tun_route_table
-	config_get tproxy_route_table "routing" "tproxy_route_table"
-	config_get tun_route_table "routing" "tun_route_table"
+	config_get tproxy_route_table "routing" "tproxy_route_table" "80"
+	config_get tun_route_table "routing" "tun_route_table" "81"
 	# delete routing policy
 	ip -4 rule del table "$tproxy_route_table" > /dev/null 2>&1
 	ip -4 rule del table "$tun_route_table" > /dev/null 2>&1
