@@ -1,0 +1,95 @@
+name: Update China IP nftables
+
+on:
+  schedule:
+    # 19:23 UTC = 03:23 Beijing time (UTC+8) the following day
+    - cron: '23 19 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-china-ip-nftables
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download China IPv4 and IPv6 lists
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://raw.githubusercontent.com/mayaxcn/china-ip-list/master'
+          curl -fLsS --retry 5 --retry-all-errors --retry-delay 3 \
+            "$base/chnroute.txt" -o "$RUNNER_TEMP/chnroute.txt"
+          curl -fLsS --retry 5 --retry-all-errors --retry-delay 3 \
+            "$base/chnroute_v6.txt" -o "$RUNNER_TEMP/chnroute_v6.txt"
+
+      - name: Replace nftables China IP sets
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import ipaddress
+          import os
+          from pathlib import Path
+
+          temp = Path(os.environ['RUNNER_TEMP'])
+          dst_dir = Path('nikki/files/nftables')
+          configurations = (
+              ('chnroute.txt', 'geoip_cn.nft', 'china_ip', 'ipv4_addr', 4),
+              ('chnroute_v6.txt', 'geoip6_cn.nft', 'china_ip6', 'ipv6_addr', 6),
+          )
+
+          # Validate both source files before replacing either destination file.
+          generated = {}
+          for filename, target, set_name, nft_type, version in configurations:
+              content = (temp / filename).read_text(encoding='utf-8-sig')
+              cidrs = [line.strip() for line in content.splitlines()
+                       if line.strip() and not line.lstrip().startswith('#')]
+              if len(cidrs) < 1000:
+                  raise RuntimeError(f'{filename}: only {len(cidrs)} entries; aborting')
+              for cidr in cidrs:
+                  network = ipaddress.ip_network(cidr, strict=True)
+                  if network.version != version:
+                      raise ValueError(f'{filename}: wrong IP version: {cidr}')
+
+              nft = (
+                  '#!/usr/sbin/nft -f\n'
+                  'table inet nikki {\n'
+                  f'\tset {set_name} {{\n'
+                  f'\t\ttype {nft_type}\n'
+                  '\t\tflags interval\n'
+                  '\t\telements = {\n'
+                  + ''.join(f'\t\t\t{cidr},\n' for cidr in cidrs)
+                  + '\t\t}\n\t}\n}\n'
+              )
+              generated[target] = nft
+              print(f'{filename} -> {target}: {len(cidrs)} CIDR ranges')
+
+          for target, nft in generated.items():
+              output = dst_dir / target
+              if not output.is_file():
+                  raise FileNotFoundError(f'Missing destination: {output}')
+              output.write_text(nft, encoding='utf-8')
+          PY
+
+      - name: Commit and push if changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -- nikki/files/nftables/geoip_cn.nft nikki/files/nftables/geoip6_cn.nft
+          if git diff --cached --quiet; then
+            echo 'No changes in China IP ranges.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore: update China IPv4 and IPv6 nftables sets'
+          git push origin HEAD:main
