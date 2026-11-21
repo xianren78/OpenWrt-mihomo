@@ -3,7 +3,7 @@ name: Update China IP nftables
 on:
   schedule:
     # 19:23 UTC = 03:23 Beijing time (UTC+8) the following day
-    - cron: '23 19 * * *'
+    - cron: '23 19 * * 2'
   workflow_dispatch:
 
 permissions:
